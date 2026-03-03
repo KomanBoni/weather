@@ -47,3 +47,70 @@ export async function fetchCurrentWeather(cityName: string): Promise<CurrentWeat
 export function getWeatherIconUrl(icon: string): string {
   return `https://openweathermap.org/img/wn/${icon}@2x.png`;
 }
+
+// Prévisions : un jour = date lisible + min / max + icône
+export type ForecastDay = {
+  dateLabel: string;
+  dayName: string;
+  tempMin: number;
+  tempMax: number;
+  icon: string;
+};
+
+function formatDayName(dateStr: string): string {
+  const date = new Date(dateStr + 'T12:00:00');
+  const days = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'];
+  return days[date.getDay()];
+}
+
+function formatDateLabel(dateStr: string): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return `${d}/${m}`;
+}
+
+export async function fetchForecast(lat: number, lon: number): Promise<ForecastDay[]> {
+  const url = `${BASE_URL}/forecast?lat=${lat}&lon=${lon}&appid=${API_KEY}&units=metric&lang=fr`;
+  const res = await fetch(url);
+  const data = await res.json();
+
+  if (!res.ok || data?.cod !== '200') {
+    if (data?.cod === 401) {
+      throw { type: 'invalid_key' as const, message: 'Clé API invalide.' };
+    }
+    throw { type: 'unknown' as const, message: data?.message || 'Erreur prévisions.' };
+  }
+
+  const list = data?.list ?? [];
+  const byDay = new Map<string, { tempMin: number[]; tempMax: number[]; icon: string }>();
+
+  for (const item of list) {
+    const dtTxt = item.dt_txt as string;
+    if (!dtTxt) continue;
+    const dateStr = dtTxt.split(' ')[0];
+    const tempMin = item.main?.temp_min ?? item.main?.temp;
+    const tempMax = item.main?.temp_max ?? item.main?.temp;
+    const icon = item.weather?.[0]?.icon ?? '01d';
+
+    if (!byDay.has(dateStr)) {
+      byDay.set(dateStr, { tempMin: [], tempMax: [], icon });
+    }
+    const day = byDay.get(dateStr)!;
+    day.tempMin.push(tempMin);
+    day.tempMax.push(tempMax);
+    day.icon = icon;
+  }
+
+  const sortedDates = Array.from(byDay.keys()).sort();
+  const result: ForecastDay[] = sortedDates.slice(0, 5).map((dateStr) => {
+    const day = byDay.get(dateStr)!;
+    return {
+      dateLabel: formatDateLabel(dateStr),
+      dayName: formatDayName(dateStr),
+      tempMin: Math.round(Math.min(...day.tempMin)),
+      tempMax: Math.round(Math.max(...day.tempMax)),
+      icon: day.icon,
+    };
+  });
+
+  return result;
+}
